@@ -1,0 +1,220 @@
+{
+  "enable": {
+    "description": "启用",
+    "hint": "启用合并转发解析插件。",
+    "type": "bool",
+    "default": true
+  },
+  "parse_group": {
+    "description": "解析群聊消息",
+    "hint": "解析群聊中的合并转发 / 引用合并转发。",
+    "type": "bool",
+    "default": true
+  },
+  "parse_private": {
+    "description": "解析私聊消息",
+    "hint": "解析私聊中的合并转发 / 引用合并转发。",
+    "type": "bool",
+    "default": true
+  },
+  "set_event_extra": {
+    "description": "写入 event.extra",
+    "hint": "解析结果写入 event.extra，供 enhance-mode / 其他插件消费。",
+    "type": "bool",
+    "default": true
+  },
+  "extra_key": {
+    "description": "extra key",
+    "hint": "解析结果写入 event.extra 的 key。",
+    "type": "string",
+    "default": "_forward_context_text"
+  },
+  "inject_to_event_message_str": {
+    "description": "写入消息文本",
+    "hint": "解析到合并转发后，把解析文本同步到 event.message_str，避免 AstrBot 默认 LLM 流程把转发当作空消息跳过。",
+    "type": "bool",
+    "default": true
+  },
+  "inject_to_llm_request": {
+    "description": "改写 LLM 请求 prompt",
+    "hint": "LLM 请求前，如果当前消息是合并转发，使用解析结果改写 prompt。适合私聊和 @ 机器人场景。",
+    "type": "bool",
+    "default": true
+  },
+  "rewrite_when_prompt_empty_only": {
+    "description": "仅空 prompt 时改写",
+    "hint": "开启后只在 prompt 为空、[转发消息]、[引用消息]、[Empty] 等情况下改写；关闭则只要解析到转发内容就改写。",
+    "type": "bool",
+    "default": true
+  },
+  "capture_plugin_outputs": {
+    "description": "缓存其他插件输出",
+    "hint": "发送消息前，把普通插件结果解析成文本并按会话短暂缓存。用于让 pokepro 等后续 LLM 请求看到 /推特测试 这类指令输出。",
+    "type": "bool",
+    "default": false
+  },
+  "plugin_output_extra_key": {
+    "description": "插件输出 extra key",
+    "hint": "最近插件输出写入 event.extra 的 key。",
+    "type": "string",
+    "default": "_forward_context_recent_outputs"
+  },
+  "plugin_output_ttl_sec": {
+    "description": "插件输出缓存有效期(秒)",
+    "hint": "超过该时间的插件输出不会再注入 LLM prompt。0 表示不过期。",
+    "type": "int",
+    "default": 600
+  },
+  "plugin_output_max_items": {
+    "description": "插件输出最大条数",
+    "hint": "每个会话最多保留最近多少条插件输出。",
+    "type": "int",
+    "default": 5
+  },
+  "plugin_output_max_chars": {
+    "description": "插件输出最大长度",
+    "hint": "注入 LLM prompt 的最近插件输出总字符上限。",
+    "type": "int",
+    "default": 3000
+  },
+  "inject_plugin_outputs_to_llm_request": {
+    "description": "注入插件输出到 LLM",
+    "hint": "开启后，LLM 请求前会把最近插件输出追加到 prompt。适合 pokepro 的 LLM 回复读取 twitter 等插件刚输出的信息。",
+    "type": "bool",
+    "default": true
+  },
+  "include_llm_results_in_plugin_outputs": {
+    "description": "缓存 LLM 回复输出",
+    "hint": "默认关闭，避免把机器人自己的 LLM 回复反复注入后续 prompt。只有确实需要时再开启。",
+    "type": "bool",
+    "default": false
+  },
+  "max_forward_depth": {
+    "description": "最大嵌套深度",
+    "hint": "递归解析嵌套合并转发的最大深度。",
+    "type": "int",
+    "default": 3
+  },
+  "max_forward_messages": {
+    "description": "最大解析消息数",
+    "hint": "每个合并转发最多解析多少条消息。",
+    "type": "int",
+    "default": 80
+  },
+  "max_output_chars": {
+    "description": "最大输出长度",
+    "hint": "解析文本最大字符数，超过会截断。",
+    "type": "int",
+    "default": 8000
+  },
+  "parse_reply_forward": {
+    "description": "解析引用合并转发",
+    "hint": "用户回复引用一条合并转发时，尝试解析被引用消息。",
+    "type": "bool",
+    "default": true
+  },
+  "parse_direct_forward": {
+    "description": "解析直接合并转发",
+    "hint": "用户直接发送合并转发时解析。",
+    "type": "bool",
+    "default": true
+  },
+  "parse_nested_forward": {
+    "description": "解析嵌套合并转发",
+    "hint": "递归展开合并转发内部的 forward.data.content。",
+    "type": "bool",
+    "default": true
+  },
+  "xml_preview_fallback": {
+    "description": "XML 预览兜底",
+    "hint": "get_forward_msg 失败或返回空时，解析 NapCat multiForwardMsgElement.xmlContent 的预览标题。",
+    "type": "bool",
+    "default": true
+  },
+  "parse_json_url_content": {
+    "description": "LLM 总结 JSON 卡片链接",
+    "hint": "解析 QQ JSON / ARK 分享卡片时，把 url 和卡片标题/描述交给 LLM，让模型自行读取链接并生成 UrlSummary。插件本身不抓取网页正文。",
+    "type": "bool",
+    "default": true
+  },
+  "json_url_summary": {
+    "description": "LLM 总结链接内容",
+    "hint": "开启后，JSON 分享卡片会调用当前 LLM 读取并总结 url。关闭后只保留 JsonShare 中的 url。",
+    "type": "bool",
+    "default": true
+  },
+  "json_url_summary_provider_id": {
+    "description": "链接总结 Provider ID",
+    "hint": "用于总结链接内容的 LLM Provider ID，留空则使用当前会话 provider。",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "json_url_summary_prompt": {
+    "description": "链接总结提示词",
+    "hint": "发送给 LLM 的链接总结提示词。提示词后会追加 url 和 QQ 分享卡片信息。",
+    "type": "string",
+    "default": "请直接读取下面链接并用简体中文总结内容，限制在 100 字以内。优先说明主题、关键信息、时间/名称/结论；如果无法读取链接，请基于分享卡片信息简要说明。"
+  },
+  "json_url_summary_max_chars": {
+    "description": "链接总结最大输出字数",
+    "hint": "UrlSummary 最多输出多少字符，超过会截断。",
+    "type": "int",
+    "default": 100
+  },
+  "image_caption": {
+    "description": "图片转述",
+    "hint": "启用图片描述。初始版默认关闭；开启后需要本地 Codex 适配你 AstrBot 的视觉模型调用 API。",
+    "type": "bool",
+    "default": false
+  },
+  "image_caption_provider_id": {
+    "description": "图片转述 Provider ID",
+    "hint": "用于图片描述的视觉模型 Provider ID，留空使用默认。",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "image_caption_prompt": {
+    "description": "图片转述提示词",
+    "hint": "发送给视觉模型的提示词。",
+    "type": "string",
+    "default": "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。"
+  },
+  "image_caption_timeout_sec": {
+    "description": "图片转述超时(秒)",
+    "hint": "单张图片调用视觉模型的最长等待时间。超时后跳过该图片描述，不影响后续转发解析。0 表示不限制。",
+    "type": "int",
+    "default": 30
+  },
+  "image_caption_cache_enable": {
+    "description": "启用图片描述缓存",
+    "hint": "缓存图片描述，避免重复调用视觉模型。",
+    "type": "bool",
+    "default": true
+  },
+  "image_caption_cache_persist": {
+    "description": "持久化图片描述缓存",
+    "hint": "开启后缓存写入 plugin_data 下的 JSON 文件，重启后仍可使用。关闭则仅内存缓存。",
+    "type": "bool",
+    "default": true
+  },
+  "image_caption_cache_ttl_sec": {
+    "description": "图片描述缓存有效期(秒)",
+    "hint": "默认 30 天。0 表示永不过期。",
+    "type": "int",
+    "default": 2592000
+  },
+  "image_caption_cache_max_items": {
+    "description": "图片描述最大缓存条数",
+    "hint": "超过后按更新时间保留最新条目。0 表示不限制。",
+    "type": "int",
+    "default": 1000
+  },
+  "debug_log_raw_forward_result": {
+    "description": "调试日志：打印 get_forward_msg 返回",
+    "hint": "排查 NapCat / OneBot 返回结构时开启。可能打印很长日志。",
+    "type": "bool",
+    "default": false
+  }
+}

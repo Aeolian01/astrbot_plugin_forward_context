@@ -1,0 +1,9 @@
+name: astrbot_plugin_forward_context
+display_name: Forward Context
+desc: Parse QQ merged-forward messages into readable LLM context.
+help: Automatically parses direct, quoted, nested, and image-containing forward messages.
+version: v0.1.0
+author: local
+repo: ""
+support_platforms:
+  - aiocqhttp
