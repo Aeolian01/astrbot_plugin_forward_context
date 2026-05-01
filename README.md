@@ -2,7 +2,7 @@
 
 把 QQ 复杂消息解析成可读文本的 AstrBot 插件。
 
-本插件用于解决 AstrBot / NapCat / aiocqhttp 场景里，合并转发、引用合并转发、嵌套转发、图片消息、QQ JSON / ARK 分享卡片在进入 LLM 流程时经常变成空消息或占位符的问题。解析后的文本会写入 `event.extra`，也可以注入 `event.message_str` 或 LLM request prompt，方便 enhance-mode、pokepro、私聊 LLM 请求和其他插件复用。
+本插件用于解决 AstrBot / NapCat / aiocqhttp 场景里，合并转发、引用合并转发、嵌套转发、图片消息、QQ JSON / ARK 分享卡片在进入 LLM 流程时经常变成空消息或占位符的问题。解析后的文本默认会写入 `event.extra`，供 enhance-mode、pokepro、私聊 LLM 请求和其他插件统一消费；如有兼容旧链路的需要，也可以显式开启注入 `event.message_str` 或 LLM request prompt。  
 
 ## 核心能力
 
@@ -16,7 +16,7 @@
 - 支持 QQ JSON / ARK 分享卡片，例如小黑盒、新闻、应用分享等 `ComponentType.Json`
 - 可把 JSON 分享卡片的 `url` 交给当前 LLM provider 读取并生成 `[UrlSummary]`
 - 可选图片描述，支持内存缓存和 JSON 持久化缓存
-- 可缓存其他插件最近输出，并在下一次 LLM 请求前追加到 prompt
+- 可缓存其他插件最近输出，默认只写入 extra，由消费方决定是否拼入 prompt
 - 暴露 `cache_plugin_output()`，供主动推送类插件手动写入最近输出缓存
 - 暴露图片描述缓存读写接口，供 enhance-mode 等插件共享图片转述缓存
 
@@ -26,9 +26,8 @@
 QQ 原始消息 / AstrBot 消息链
   -> forward_context 解析合并转发、JSON 卡片、图片等复杂段
   -> 写入 event.extra["_forward_context_text"]
-  -> 可选同步到 event.message_str
-  -> 可选在 on_llm_request 阶段改写或追加 prompt
-  -> LLM / enhance-mode / pokepro 读取到可理解的上下文
+  -> enhance-mode / 其他插件统一读取 extra 组装最终 prompt
+  -> LLM 读取到可理解的上下文
 ```
 
 如果开启插件输出缓存，还会额外维护同一 `unified_msg_origin` 下最近的普通插件输出：
@@ -36,8 +35,8 @@ QQ 原始消息 / AstrBot 消息链
 ```text
 其他插件输出
   -> forward_context 在 on_decorating_result 阶段转成文本
-  -> 写入最近输出缓存
-  -> 下一次 LLM 请求前追加为 [RecentPluginOutput]
+  -> 写入 event.extra["_forward_context_recent_outputs"]
+  -> 由消费方决定是否追加进最终 prompt
 ```
 
 ## 安装
@@ -45,7 +44,7 @@ QQ 原始消息 / AstrBot 消息链
 把插件目录复制到 AstrBot 插件目录，例如：
 
 ```bash
-/root/astrbot-napcat/data/plugins/astrbot_plugin_forward_context
+a/root/astrbot-napcat/data/plugins/astrbot_plugin_forward_context
 ```
 
 然后重启 AstrBot：
@@ -74,7 +73,7 @@ astrbot_plugin_forward_context/
 
 ## 推荐配置
 
-默认配置已经适合大多数场景。下面是一份偏完整的参考配置：
+默认配置现在采用“extra-only”模式，适合和 enhance-mode 等统一组装 prompt 的插件联动：
 
 ```json
 {
@@ -83,8 +82,8 @@ astrbot_plugin_forward_context/
   "parse_private": true,
   "set_event_extra": true,
   "extra_key": "_forward_context_text",
-  "inject_to_event_message_str": true,
-  "inject_to_llm_request": true,
+  "inject_to_event_message_str": false,
+  "inject_to_llm_request": false,
   "rewrite_when_prompt_empty_only": true,
 
   "capture_plugin_outputs": false,
@@ -92,7 +91,7 @@ astrbot_plugin_forward_context/
   "plugin_output_ttl_sec": 600,
   "plugin_output_max_items": 5,
   "plugin_output_max_chars": 3000,
-  "inject_plugin_outputs_to_llm_request": true,
+  "inject_plugin_outputs_to_llm_request": false,
   "include_llm_results_in_plugin_outputs": false,
 
   "max_forward_depth": 3,
@@ -126,12 +125,12 @@ astrbot_plugin_forward_context/
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `set_event_extra` | `true` | 把解析结果写入 `event.extra[extra_key]` |
-| `inject_to_event_message_str` | `true` | 把解析结果同步到 `event.message_str`，避免 AstrBot 默认 LLM 流程看到空消息 |
-| `inject_to_llm_request` | `true` | 在 LLM 请求前用解析文本改写 prompt |
-| `rewrite_when_prompt_empty_only` | `true` | 仅当原 prompt 为空、`[转发消息]`、`[引用消息]`、`[ComponentType.Json]` 等占位内容时改写 |
-| `capture_plugin_outputs` | `false` | 缓存其他插件最近输出，适合 pokepro 读取 twitter 等插件刚输出的信息 |
-| `inject_plugin_outputs_to_llm_request` | `true` | 开启插件输出缓存后，把最近输出追加到 LLM prompt |
+| `set_event_extra` | `true` | 把解析结果写入 `event.extra[extra_key]`，作为统一注入入口 |
+| `inject_to_event_message_str` | `false` | 仅在需要兼容 AstrBot 默认链路时才开启，同步解析结果到 `event.message_str` |
+| `inject_to_llm_request` | `false` | 仅在没有统一 prompt 组装器时才开启，直接改写 LLM request prompt |
+| `rewrite_when_prompt_empty_only` | `true` | 开启 request prompt 改写后，仅当原 prompt 为空、`[转发消息]`、`[引用消息]`、`[ComponentType.Json]` 等占位内容时改写 |
+| `capture_plugin_outputs` | `false` | 缓存其他插件最近输出，供消费方后续选择性读取 |
+| `inject_plugin_outputs_to_llm_request` | `false` | 仅在启用 request prompt 改写并希望自动追加最近输出时开启 |
 | `parse_json_url_content` | `true` | 解析 JSON 分享卡片时尝试处理卡片 URL |
 | `json_url_summary` | `true` | 调用当前或指定 LLM provider 生成 `[UrlSummary]` |
 | `image_caption` | `false` | 为图片消息生成文字描述，需要可用的视觉模型/provider |
@@ -167,26 +166,18 @@ prompt: [分享]《ARC Raiders》中国版号正式获批...
 
 ## 插件输出缓存
 
-如果希望 pokepro 的 LLM 回复参考 `/推特测试`、Twitter 链接识别等其他插件刚输出的信息，开启：
+如果希望其他插件复用最近输出，可以开启：
 
 ```json
 {
   "capture_plugin_outputs": true,
-  "inject_plugin_outputs_to_llm_request": true,
   "plugin_output_ttl_sec": 600,
   "plugin_output_max_items": 5,
   "plugin_output_max_chars": 3000
 }
 ```
 
-开启后，本插件会在 AstrBot 发送普通插件结果前，把 `Plain`、`Image`、`Node`、`Nodes` 等消息链解析成文本，按 `unified_msg_origin` 缓存到 `_forward_context_recent_outputs`，并在下一次 LLM 请求前追加到 prompt：
-
-```text
-以下是最近其他插件输出，可作为上下文参考：
-[RecentPluginOutput]
-1. (astrbot_plugin_xxx.handler)
-  ...
-```
+开启后，本插件会在 AstrBot 发送普通插件结果前，把 `Plain`、`Image`、`Node`、`Nodes` 等消息链解析成文本，按 `unified_msg_origin` 缓存到 `_forward_context_recent_outputs`。默认不会自动追加进 LLM prompt，而是由消费方自行决定是否读取和拼接。
 
 默认不会缓存机器人自己的 LLM 回复，避免后续 prompt 被自身回复反复污染。只有确实需要时再开启 `include_llm_results_in_plugin_outputs`。
 
@@ -244,25 +235,24 @@ text = await parse_history_message(event, adapter_history_message)
 
 ## enhance-mode 集成
 
-如果希望 enhance-mode 的 `model_choice` 在判定前就能看到解析后的内容，需要在 enhance-mode 构造当前消息文本时优先读取：
+推荐集成方式：
 
 ```python
 parsed = event.get_extra("_forward_context_text")
+recent = event.get_extra("_forward_context_recent_outputs")
 ```
 
-可参考：
+由 enhance-mode 统一决定：
 
-- `integration/enhance_mode_consumer_patch.md`
-- `integration/enhance_mode_forward_context_handoff.md`
+- 当前消息是否优先使用 `parsed`
+- 是否把 `recent` 拼入最终 prompt
+- 何时、以什么格式给 provider 发请求
+
+这种 extra-only 方式可以避免多个插件同时改写 `event.message_str` 或 `req.prompt` 导致重复注入。
 
 ## pokepro / twitter 集成
 
-pokepro 一般不需要直接依赖本插件，只要开启插件输出缓存即可让 `on_llm_request` 自动追加最近输出。更细的接入方式见：
-
-- `integration/pokepro_plugin_output_context.md`
-- `integration/twitter_active_send_patch.md`
-
-其中 twitter 主动推送需要在 `context.send_message(...)` 前调用 `cache_plugin_output()`，否则这类主动消息不会被 AstrBot 的结果装饰钩子自动捕获。
+pokepro、twitter 等插件如果只需要共享解析结果或最近输出，一般不需要本插件自动改 prompt，只要读取 extra 或调用公共接口即可。主动推送类插件仍可在 `context.send_message(...)` 前调用 `cache_plugin_output()`，让后续统一组装器读取最近输出。
 
 ## 调试
 
