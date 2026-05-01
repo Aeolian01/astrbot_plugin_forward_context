@@ -95,6 +95,44 @@ class ForwardContextPlugin(Star):
         # Unknown message type: allow parsing, because forward parser is harmless.
         return True
 
+    def _looks_empty_or_forward_prompt(self, prompt: str) -> bool:
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            return True
+        normalized = prompt.replace(" ", "")
+        normalized_lower = normalized.lower()
+        return normalized in {
+            "[转发消息]",
+            "[引用消息]",
+            "[引用消息][At]",
+            "[Empty]",
+            "[Forward]",
+            "[ComponentType.Json]",
+            "[Json]",
+        } or normalized_lower in {
+            "[componenttype.json]",
+            "[json]",
+        } or "[CQ:forward" in prompt or "[CQ:json" in prompt or "[转发消息]" in prompt
+
+    def _get_req_prompt(self, req: Any) -> str:
+        if req is None:
+            return ""
+        if isinstance(req, dict):
+            return str(req.get("prompt") or "")
+        return str(getattr(req, "prompt", "") or "")
+
+    def _set_req_prompt(self, req: Any, prompt: str) -> bool:
+        if req is None:
+            return False
+        if isinstance(req, dict):
+            req["prompt"] = prompt
+            return True
+        try:
+            setattr(req, "prompt", prompt)
+            return True
+        except Exception:
+            return False
+
     def _get_recent_output_context(self, event: AstrMessageEvent) -> str:
         if not self.cfg.capture_plugin_outputs:
             return ""
@@ -226,6 +264,24 @@ class ForwardContextPlugin(Star):
             text = text[: self.cfg.max_output_chars].rstrip() + "\n...[truncated]"
         return text
 
+    def _attach_to_event_message_str(self, event: AstrMessageEvent, text: str) -> bool:
+        """Make parsed forward content visible to AstrBot's default LLM flow."""
+        updated = False
+        try:
+            setattr(event, "message_str", text)
+            updated = True
+        except Exception as e:
+            logger.debug("forward-context | set event.message_str failed: %s", e)
+
+        msg_obj = getattr(event, "message_obj", None)
+        if msg_obj is not None:
+            try:
+                setattr(msg_obj, "message_str", text)
+                updated = True
+            except Exception as e:
+                logger.debug("forward-context | set message_obj.message_str failed: %s", e)
+        return updated
+
     async def _parse_and_attach(self, event: AstrMessageEvent) -> str:
         result = await self.parser.parse_event(event)
         text = result.text.strip()
@@ -238,6 +294,12 @@ class ForwardContextPlugin(Star):
                 event.set_extra("_forward_context_ids", result.used_forward_ids or [])
             except Exception as e:
                 logger.debug("forward-context | set event extra failed: %s", e)
+        if self.cfg.inject_to_event_message_str and result.found_forward:
+            if self._attach_to_event_message_str(event, text):
+                logger.debug(
+                    "forward-context | event message_str rewritten | origin=%s",
+                    getattr(event, "unified_msg_origin", ""),
+                )
         logger.debug(
             "forward-context | parsed | origin=%s found=%s text=%s",
             getattr(event, "unified_msg_origin", ""),
@@ -248,7 +310,11 @@ class ForwardContextPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def on_message(self, event: AstrMessageEvent):
-        """Parse early and store text in event.extra."""
+        """Parse early and store text in event.extra.
+
+        注意：如果 enhance-mode 的 on_group_message 先于本插件执行，则 model_choice 仍然看不到 extra。
+        解决：调整插件加载顺序，或在 enhance-mode 中直接调用本插件 parser / 读取 extra。
+        """
         if not self._should_parse_event(event):
             return
         try:
@@ -256,6 +322,83 @@ class ForwardContextPlugin(Star):
             self._get_recent_output_context(event)
         except Exception as e:
             logger.warning("forward-context | on_message parse failed: %s", e, exc_info=True)
+
+    @filter.on_llm_request(priority=100)
+    async def on_llm_request(self, event: AstrMessageEvent, req: Any = None):
+        """Rewrite LLM prompt when current message is forward-like.
+
+        This hook is useful for private chat and @-bot requests. For enhance-mode active_reply
+        model_choice, the parse must happen before enhance-mode's on_group_message, or enhance-mode
+        must consume event.extra explicitly.
+        """
+        if not self.cfg.enable:
+            return
+        inject_recent_outputs = (
+            self.cfg.capture_plugin_outputs
+            and self.cfg.inject_plugin_outputs_to_llm_request
+        )
+        if not self.cfg.inject_to_llm_request and not inject_recent_outputs:
+            return
+
+        parsed = ""
+        if self.cfg.inject_to_llm_request:
+            try:
+                parsed = event.get_extra(self.cfg.extra_key) or ""
+            except Exception:
+                parsed = ""
+
+            if not parsed and self._should_parse_event(event):
+                try:
+                    parsed = await self._parse_and_attach(event)
+                except Exception as e:
+                    logger.debug("forward-context | on_llm_request parse failed: %s", e)
+                    parsed = ""
+
+        recent_outputs = self._get_recent_output_context(event) if inject_recent_outputs else ""
+
+        if not parsed and not recent_outputs:
+            return
+
+        # Current AstrBot calls hooks as (event, req); older builds may only expose extra.
+        if req is None:
+            try:
+                req = event.get_extra("provider_request")
+            except Exception:
+                req = None
+
+        if req is None:
+            logger.debug("forward-context | provider_request not found; prompt not rewritten")
+            return
+
+        current_prompt = self._get_req_prompt(req)
+        next_prompt = current_prompt
+
+        if parsed:
+            if not (
+                self.cfg.rewrite_when_prompt_empty_only
+                and not self._looks_empty_or_forward_prompt(current_prompt)
+            ):
+                next_prompt = parsed
+
+        if recent_outputs:
+            output_block = (
+                "以下是最近其他插件输出，可作为上下文参考：\n"
+                f"{recent_outputs}"
+            )
+            if recent_outputs not in next_prompt:
+                next_prompt = f"{next_prompt.rstrip()}\n\n{output_block}".strip()
+
+        if next_prompt == current_prompt:
+            return
+
+        if self._set_req_prompt(req, next_prompt):
+            logger.debug(
+                "forward-context | llm prompt rewritten | origin=%s text=%s",
+                getattr(event, "unified_msg_origin", ""),
+                next_prompt[:800],
+            )
+        else:
+            logger.debug("forward-context | rewrite prompt failed: unsupported request object")
 
     @filter.on_decorating_result(priority=-100)
     async def on_decorating_result(self, event: AstrMessageEvent):
