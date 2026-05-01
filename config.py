@@ -32,16 +32,12 @@ class ForwardContextConfig:
     parse_private: bool = True
     set_event_extra: bool = True
     extra_key: str = "_forward_context_text"
-    inject_to_event_message_str: bool = False
-    inject_to_llm_request: bool = False
-    rewrite_when_prompt_empty_only: bool = True
 
     capture_plugin_outputs: bool = False
     plugin_output_extra_key: str = "_forward_context_recent_outputs"
     plugin_output_ttl_sec: int = 600
     plugin_output_max_items: int = 5
     plugin_output_max_chars: int = 3000
-    inject_plugin_outputs_to_llm_request: bool = False
     include_llm_results_in_plugin_outputs: bool = False
 
     max_forward_depth: int = 3
@@ -81,15 +77,11 @@ def parse_config(raw: dict[str, Any] | None) -> ForwardContextConfig:
         parse_private=_to_bool(raw.get("parse_private"), True),
         set_event_extra=_to_bool(raw.get("set_event_extra"), True),
         extra_key=str(raw.get("extra_key") or "_forward_context_text"),
-        inject_to_event_message_str=_to_bool(raw.get("inject_to_event_message_str"), False),
-        inject_to_llm_request=_to_bool(raw.get("inject_to_llm_request"), False),
-        rewrite_when_prompt_empty_only=_to_bool(raw.get("rewrite_when_prompt_empty_only"), True),
         capture_plugin_outputs=_to_bool(raw.get("capture_plugin_outputs"), False),
         plugin_output_extra_key=str(raw.get("plugin_output_extra_key") or "_forward_context_recent_outputs"),
         plugin_output_ttl_sec=max(0, _to_int(raw.get("plugin_output_ttl_sec"), 600)),
         plugin_output_max_items=max(1, _to_int(raw.get("plugin_output_max_items"), 5)),
         plugin_output_max_chars=max(500, _to_int(raw.get("plugin_output_max_chars"), 3000)),
-        inject_plugin_outputs_to_llm_request=_to_bool(raw.get("inject_plugin_outputs_to_llm_request"), False),
         include_llm_results_in_plugin_outputs=_to_bool(raw.get("include_llm_results_in_plugin_outputs"), False),
         max_forward_depth=max(0, _to_int(raw.get("max_forward_depth"), 3)),
         max_forward_messages=max(1, _to_int(raw.get("max_forward_messages"), 80)),
