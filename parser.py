@@ -573,6 +573,16 @@ class ForwardParser:
         if not provider_id:
             provider_id = await self.image_captioner._get_current_chat_provider_id(event)
 
+        provider = None
+        try:
+            provider = await self.image_captioner._get_provider(event, provider_id)
+        except Exception as e:
+            logger.debug("forward-context | json url summary get provider failed | err=%s", e)
+        if self._should_use_gemini_url_context(provider_id, provider):
+            text = await self._text_chat_with_gemini_url_context(provider, prompt)
+            if text:
+                return self._limit_url_text(text)
+
         context = getattr(self.image_captioner, "context", None)
         llm_generate = getattr(context, "llm_generate", None)
         if callable(llm_generate) and provider_id:
@@ -588,7 +598,6 @@ class ForwardParser:
                     e,
                 )
 
-        provider = await self.image_captioner._get_provider(event, provider_id)
         text_chat = getattr(provider, "text_chat", None)
         if callable(text_chat):
             try:
@@ -600,6 +609,73 @@ class ForwardParser:
                 logger.debug("forward-context | json url summary text_chat failed | err=%s", e)
 
         return ""
+
+    def _should_use_gemini_url_context(self, provider_id: str, provider: Any) -> bool:
+        if not self.cfg.json_url_summary_gemini_url_context or provider is None:
+            return False
+        tokens = [provider_id, provider.__class__.__name__]
+        provider_config = getattr(provider, "provider_config", None)
+        if isinstance(provider_config, dict):
+            for key in ("type", "provider", "model", "model_name", "api_base"):
+                tokens.append(str(provider_config.get(key) or ""))
+        for attr in ("type", "provider_type", "model", "model_name", "api_base"):
+            tokens.append(str(getattr(provider, attr, "") or ""))
+        get_model = getattr(provider, "get_model", None)
+        if callable(get_model):
+            try:
+                tokens.append(str(get_model() or ""))
+            except Exception:
+                pass
+        text = " ".join(tokens).lower()
+        return any(
+            marker in text
+            for marker in (
+                "gemini-2.5",
+                "gemini-3",
+                "googlegenai",
+                "google-genai",
+                "providergooglegenai",
+                "generativelanguage.googleapis.com",
+            )
+        )
+
+    async def _text_chat_with_gemini_url_context(self, provider: Any, prompt: str) -> str:
+        text_chat = getattr(provider, "text_chat", None)
+        if not callable(text_chat):
+            return ""
+
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            try:
+                resp = await text_chat(prompt=prompt)
+                return self.image_captioner._response_text(resp)
+            except Exception as e:
+                logger.debug("forward-context | gemini url context summary failed | err=%s", e)
+                return ""
+
+        had_url_context = "gm_url_context" in provider_config
+        old_url_context = provider_config.get("gm_url_context")
+        had_coderunner = "gm_native_coderunner" in provider_config
+        old_coderunner = provider_config.get("gm_native_coderunner")
+        try:
+            # AstrBot's Google GenAI provider reads native URL Context from
+            # provider_config while building GenerateContentConfig.
+            provider_config["gm_url_context"] = True
+            provider_config["gm_native_coderunner"] = False
+            resp = await text_chat(prompt=prompt)
+            return self.image_captioner._response_text(resp)
+        except Exception as e:
+            logger.debug("forward-context | gemini url context summary failed | err=%s", e)
+            return ""
+        finally:
+            if had_url_context:
+                provider_config["gm_url_context"] = old_url_context
+            else:
+                provider_config.pop("gm_url_context", None)
+            if had_coderunner:
+                provider_config["gm_native_coderunner"] = old_coderunner
+            else:
+                provider_config.pop("gm_native_coderunner", None)
 
     def _limit_url_text(self, text: str) -> str:
         max_chars = max(100, int(self.cfg.json_url_summary_max_chars))
