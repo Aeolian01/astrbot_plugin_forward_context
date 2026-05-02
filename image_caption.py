@@ -7,7 +7,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .cache import ImageCaptionCache
+from .cache import ImageCaptionCache, build_image_caption_sources
 from .config import ForwardContextConfig
 
 
@@ -35,25 +35,48 @@ class ImageCaptioner:
     async def caption(self, event: Any, image_url: str, *, cache_source: str = "") -> str:
         if not self.cfg.image_caption:
             return ""
-        source = cache_source or image_url
-        cached = self.cache.get(source)
+        return await self.get_or_create(event, image_url, cache_source=cache_source)
+
+    async def get_or_create(
+        self,
+        event: Any,
+        image_url: str,
+        *,
+        cache_source: str = "",
+        extra_sources: Any = None,
+        provider_id: str = "",
+        prompt: str = "",
+        timeout_sec: float | None = None,
+    ) -> str:
+        sources = build_image_caption_sources(
+            image_url=image_url,
+            cache_source=cache_source,
+            extra_sources=extra_sources,
+        )
+        cached = self.cache.get(sources)
         if cached:
-            logger.debug("forward-context | image_caption cache hit | source=%s", source)
+            logger.debug("forward-context | image_caption cache hit | sources=%s", sources)
             return cached
         if not image_url:
             return ""
         try:
-            caption = await self._caption_with_timeout(event, image_url)
+            caption = await self._caption_with_timeout(
+                event,
+                image_url,
+                provider_id=provider_id,
+                prompt=prompt,
+                timeout_sec=timeout_sec,
+            )
             caption = str(caption or "").strip().replace("\n", " ")
             if len(caption) > 160:
                 caption = caption[:160].rstrip() + "..."
             if caption:
-                self.cache.set(source, caption)
+                self.cache.set(sources, caption)
             return caption
         except asyncio.TimeoutError:
             logger.debug(
                 "forward-context | image caption timeout | timeout_sec=%s image_url=%s",
-                self.cfg.image_caption_timeout_sec,
+                timeout_sec if timeout_sec is not None else self.cfg.image_caption_timeout_sec,
                 image_url,
             )
             return ""
@@ -61,19 +84,42 @@ class ImageCaptioner:
             logger.debug("forward-context | image caption failed: %s", e)
             return ""
 
-    async def _caption_with_timeout(self, event: Any, image_url: str) -> str:
-        timeout_sec = max(0, int(self.cfg.image_caption_timeout_sec))
-        coro = self._caption_via_provider(event, image_url)
-        if timeout_sec <= 0:
+    async def _caption_with_timeout(
+        self,
+        event: Any,
+        image_url: str,
+        *,
+        provider_id: str = "",
+        prompt: str = "",
+        timeout_sec: float | None = None,
+    ) -> str:
+        effective_timeout = (
+            self.cfg.image_caption_timeout_sec if timeout_sec is None else timeout_sec
+        )
+        effective_timeout = max(0, float(effective_timeout))
+        coro = self._caption_via_provider(
+            event,
+            image_url,
+            provider_id=provider_id,
+            prompt=prompt,
+        )
+        if effective_timeout <= 0:
             return await coro
-        return await asyncio.wait_for(coro, timeout=timeout_sec)
+        return await asyncio.wait_for(coro, timeout=effective_timeout)
 
-    async def _caption_via_provider(self, event: Any, image_url: str) -> str:
-        prompt = (self.cfg.image_caption_prompt or "").strip()
+    async def _caption_via_provider(
+        self,
+        event: Any,
+        image_url: str,
+        *,
+        provider_id: str = "",
+        prompt: str = "",
+    ) -> str:
+        prompt = (prompt or self.cfg.image_caption_prompt or "").strip()
         if not prompt:
             prompt = "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。"
 
-        provider_id = (self.cfg.image_caption_provider_id or "").strip()
+        provider_id = (provider_id or self.cfg.image_caption_provider_id or "").strip()
         if not provider_id:
             provider_id = await self._get_current_chat_provider_id(event)
 

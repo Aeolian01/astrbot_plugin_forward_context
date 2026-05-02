@@ -8,14 +8,19 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
+from .cache import ImageMessageRegistryStore
 from .config import ForwardContextConfig, parse_config
 from .image_caption import ImageCaptioner
 from .parser import ForwardParser
 from .public_api import (
     register_image_caption_cache,
+    register_image_caption_creator,
+    register_image_message_reader,
     register_history_message_parser,
     register_plugin_output_cache,
     unregister_image_caption_cache,
+    unregister_image_caption_creator,
+    unregister_image_message_reader,
     unregister_history_message_parser,
     unregister_plugin_output_cache,
 )
@@ -52,6 +57,11 @@ class ForwardContextPlugin(Star):
         self.plugin_data_dir.mkdir(parents=True, exist_ok=True)
 
         self.image_captioner = ImageCaptioner(context, self.cfg, self.plugin_data_dir)
+        self.image_message_registry = ImageMessageRegistryStore(
+            self.plugin_data_dir / "image_message_registry.json",
+            max_messages_per_origin=max(100, self.cfg.image_caption_cache_max_items),
+            max_origins=500,
+        )
         self.parser = ForwardParser(self.cfg, self.image_captioner)
         self.recent_outputs = RecentContextStore(
             ttl_sec=self.cfg.plugin_output_ttl_sec,
@@ -66,6 +76,10 @@ class ForwardContextPlugin(Star):
             self._image_caption_cache_reader,
             self._image_caption_cache_writer,
         )
+        self._image_caption_creator = self.image_captioner.get_or_create
+        register_image_caption_creator(self._image_caption_creator)
+        self._image_message_reader = self.image_message_registry.get_message
+        register_image_message_reader(self._image_message_reader)
         self._history_message_parser = self.parse_history_message
         register_history_message_parser(self._history_message_parser)
 
@@ -75,6 +89,8 @@ class ForwardContextPlugin(Star):
             self._image_caption_cache_reader,
             self._image_caption_cache_writer,
         )
+        unregister_image_caption_creator(self._image_caption_creator)
+        unregister_image_message_reader(self._image_message_reader)
         unregister_history_message_parser(self._history_message_parser)
 
     def _message_type_name(self, event: AstrMessageEvent) -> str:
@@ -94,6 +110,95 @@ class ForwardContextPlugin(Star):
             return self.cfg.parse_private
         # Unknown message type: allow parsing, because forward parser is harmless.
         return True
+
+    @staticmethod
+    def _normalize_message_id(raw: Any) -> str:
+        return str(raw or "").strip()
+
+    @staticmethod
+    def _pick_first(data: dict[str, Any], keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = data.get(key)
+            clean = str(value or "").strip()
+            if clean:
+                return clean
+        return ""
+
+    def _image_source_from_data(self, data: dict[str, Any]) -> dict[str, str] | None:
+        image_url = self._pick_first(
+            data,
+            ("url", "image_url", "src", "download_url", "origin_url", "file", "path"),
+        )
+        fileid = self._pick_first(data, ("fileid", "file_id"))
+        if fileid and not fileid.startswith("fileid:"):
+            fileid = f"fileid:{fileid}"
+        cache_source = fileid or self._pick_first(
+            data,
+            ("file", "url", "image_url", "src", "path", "download_url", "origin_url"),
+        )
+        if not image_url and not cache_source:
+            return None
+        return {
+            "url": image_url or cache_source,
+            "cache_source": cache_source or image_url,
+        }
+
+    def _image_sources_from_segments(self, segments: Any) -> list[dict[str, str]]:
+        if not isinstance(segments, list):
+            return []
+        sources: list[dict[str, str]] = []
+        for seg in segments:
+            if self.parser._segment_type(seg) != "image":
+                continue
+            source = self._image_source_from_data(self.parser._segment_data(seg))
+            if source is not None:
+                sources.append(source)
+        return sources
+
+    def _event_message_id(self, event: Any) -> str:
+        msg_obj = getattr(event, "message_obj", None)
+        return self._normalize_message_id(
+            getattr(msg_obj, "message_id", "")
+            or getattr(event, "message_id", "")
+            or getattr(event, "id", "")
+        )
+
+    def _register_event_image_message(self, event: Any) -> None:
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        message_id = self._event_message_id(event)
+        if not origin or not message_id:
+            return
+        sources = self._image_sources_from_segments(self.parser._get_message_segments(event))
+        if not sources:
+            return
+        self.image_message_registry.set_message(
+            origin,
+            message_id,
+            [source["url"] for source in sources],
+            [source["cache_source"] for source in sources],
+        )
+
+    def _register_history_image_message(self, event: Any, message: Any) -> None:
+        if not isinstance(message, dict):
+            return
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        message_id = self._normalize_message_id(
+            message.get("message_id") or message.get("id") or message.get("real_id") or ""
+        )
+        if not origin or not message_id:
+            return
+        raw_segments = message.get("message")
+        if raw_segments is None:
+            raw_segments = message.get("raw_message")
+        sources = self._image_sources_from_segments(raw_segments)
+        if not sources:
+            return
+        self.image_message_registry.set_message(
+            origin,
+            message_id,
+            [source["url"] for source in sources],
+            [source["cache_source"] for source in sources],
+        )
 
     def _looks_empty_or_forward_prompt(self, prompt: str) -> bool:
         prompt = str(prompt or "").strip()
@@ -232,6 +337,7 @@ class ForwardContextPlugin(Star):
         """Public bridge for parsing one message from adapter history."""
         if not self.cfg.enable:
             return ""
+        self._register_history_image_message(event, message)
         try:
             node_text = await self.parser.forward_node_to_text(event, message, depth=0)
             json_texts = await self.parser.extract_json_texts_from_obj(
@@ -318,6 +424,7 @@ class ForwardContextPlugin(Star):
         if not self._should_parse_event(event):
             return
         try:
+            self._register_event_image_message(event)
             await self._parse_and_attach(event)
             self._get_recent_output_context(event)
         except Exception as e:

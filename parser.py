@@ -340,8 +340,17 @@ class ForwardParser:
             return f"[Reply #msg{data.get('id') or ''}]"
         if seg_type == "image":
             fallback = data.get("summary") or "[Image]"
-            url = data.get("url") or data.get("file") or ""
-            cache_source = data.get("file") or url
+            url = (
+                data.get("url")
+                or data.get("image_url")
+                or data.get("src")
+                or data.get("download_url")
+                or data.get("origin_url")
+                or data.get("file")
+                or ""
+            )
+            fileid = data.get("fileid") or data.get("file_id") or ""
+            cache_source = f"fileid:{fileid}" if fileid else (data.get("file") or url)
             if self.image_captioner and self.cfg.image_caption:
                 caption = await self.image_captioner.caption(event, url, cache_source=cache_source)
                 if caption:
@@ -1118,6 +1127,13 @@ class ForwardParser:
             "text",
             "url",
             "file",
+            "fileid",
+            "file_id",
+            "image_url",
+            "src",
+            "download_url",
+            "origin_url",
+            "path",
             "summary",
             "qq",
             "id",

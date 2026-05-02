@@ -217,15 +217,28 @@ await cache_plugin_output(
 
 ```python
 from astrbot_plugin_forward_context import (
+    build_image_caption_sources,
     get_cached_image_caption,
+    get_cached_image_message,
+    get_or_create_image_caption,
     set_cached_image_caption,
 )
 
-caption = await get_cached_image_caption(image_url_or_fileid)
-await set_cached_image_caption(image_url_or_fileid, "图片描述")
+sources = build_image_caption_sources(
+    image_url=image_url,
+    cache_source=cache_source,
+)
+caption = await get_cached_image_caption(sources)
+caption = caption or await get_or_create_image_caption(
+    event,
+    image_url,
+    cache_source=cache_source,
+)
+image_entry = await get_cached_image_message(umo, message_id)
+await set_cached_image_caption(sources, "图片描述")
 ```
 
-如果 `forward_context` 未加载、缓存未注册或缓存关闭，读取返回空字符串，写入为 no-op。
+`get_cached_image_caption` 和 `set_cached_image_caption` 兼容单个 source 字符串，也支持 source 列表；列表里任一别名命中后会回写同组别名。`get_cached_image_message` 返回持久化的 `message_id -> 图片记录`，不存在时返回空字典。如果 `forward_context` 未加载、缓存未注册或缓存关闭，读取返回空字符串/空字典，写入为 no-op。
 
 平台历史消息也可以交给本插件按同一套合并转发、JSON 分享卡片、图片规则解析：
 
