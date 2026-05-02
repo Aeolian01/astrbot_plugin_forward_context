@@ -162,6 +162,12 @@
     "type": "int",
     "default": 100
   },
+  "json_url_summary_gemini_url_context": {
+    "description": "Gemini URL Context",
+    "hint": "使用 Gemini / Google GenAI provider 总结链接时，临时启用 Gemini 原生 URL Context 格式，适配 gemini-2.5-flash 等模型。关闭后只按普通文本 prompt 调用。",
+    "type": "bool",
+    "default": true
+  },
   "image_caption": {
     "description": "图片转述",
     "hint": "启用图片描述。初始版默认关闭；开启后需要本地 Codex 适配你 AstrBot 的视觉模型调用 API。",

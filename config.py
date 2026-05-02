@@ -60,6 +60,7 @@ class ForwardContextConfig:
         "优先说明主题、关键信息、时间/名称/结论；如果无法读取链接，请基于分享卡片信息简要说明。"
     )
     json_url_summary_max_chars: int = 100
+    json_url_summary_gemini_url_context: bool = True
 
     image_caption: bool = False
     image_caption_provider_id: str = ""
@@ -107,6 +108,9 @@ def parse_config(raw: dict[str, Any] | None) -> ForwardContextConfig:
             "优先说明主题、关键信息、时间/名称/结论；如果无法读取链接，请基于分享卡片信息简要说明。"
         ),
         json_url_summary_max_chars=max(100, _to_int(raw.get("json_url_summary_max_chars"), 100)),
+        json_url_summary_gemini_url_context=_to_bool(
+            raw.get("json_url_summary_gemini_url_context"), True
+        ),
         image_caption=_to_bool(raw.get("image_caption"), False),
         image_caption_provider_id=str(raw.get("image_caption_provider_id") or ""),
         image_caption_prompt=str(

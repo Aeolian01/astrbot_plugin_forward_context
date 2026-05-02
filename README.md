@@ -107,6 +107,7 @@ astrbot_plugin_forward_context/
   "json_url_summary_provider_id": "",
   "json_url_summary_prompt": "请直接读取下面链接并用简体中文总结内容，限制在 100 字以内。优先说明主题、关键信息、时间/名称/结论；如果无法读取链接，请基于分享卡片信息简要说明。",
   "json_url_summary_max_chars": 100,
+  "json_url_summary_gemini_url_context": true,
 
   "image_caption": false,
   "image_caption_provider_id": "",
@@ -133,6 +134,7 @@ astrbot_plugin_forward_context/
 | `inject_plugin_outputs_to_llm_request` | `false` | 仅在启用 request prompt 改写并希望自动追加最近输出时开启 |
 | `parse_json_url_content` | `true` | 解析 JSON 分享卡片时尝试处理卡片 URL |
 | `json_url_summary` | `true` | 调用当前或指定 LLM provider 生成 `[UrlSummary]` |
+| `json_url_summary_gemini_url_context` | `true` | 使用 Gemini / Google GenAI provider 总结链接时，临时启用 Gemini 原生 URL Context，适配 `gemini-2.5-flash` 等模型 |
 | `image_caption` | `false` | 为图片消息生成文字描述，需要可用的视觉模型/provider |
 | `image_caption_timeout_sec` | `30` | 单张图片转述最长等待秒数，超时后跳过图片描述，`0` 表示不限制 |
 | `debug_log_raw_forward_result` | `false` | 打印 `get_forward_msg` / `get_msg` 返回结构，排查适配器字段差异 |
@@ -161,6 +163,8 @@ prompt: [分享]《ARC Raiders》中国版号正式获批...
 ```
 
 `parse_json_url_content` 和 `json_url_summary` 默认开启。插件本身不会抓取网页正文，而是把 URL 和分享卡片信息交给当前 LLM provider；能否直接读取 URL 取决于你配置的模型和 provider 能力。可以通过 `json_url_summary_provider_id` 指定专门用于链接总结的 provider。
+
+当链接总结 provider 是 Gemini / Google GenAI 时，`json_url_summary_gemini_url_context` 默认会临时启用 Gemini 原生 URL Context 格式，适配 `gemini-2.5-flash` 等支持 URL Context 的模型。
 
 为避免重复调用，URL 总结会在插件运行期间做短期内存缓存。
 
