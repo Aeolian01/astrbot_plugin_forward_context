@@ -97,15 +97,73 @@ class ImageCaptioner:
             self.cfg.image_caption_timeout_sec if timeout_sec is None else timeout_sec
         )
         effective_timeout = max(0, float(effective_timeout))
-        coro = self._caption_via_provider(
-            event,
-            image_url,
-            provider_id=provider_id,
-            prompt=prompt,
-        )
-        if effective_timeout <= 0:
-            return await coro
-        return await asyncio.wait_for(coro, timeout=effective_timeout)
+        candidates = await self._caption_provider_candidates(event, provider_id)
+        for candidate_id, fallback_to_using_provider in candidates:
+            provider_label = candidate_id or "<using_provider>"
+            try:
+                coro = self._caption_via_provider(
+                    event,
+                    image_url,
+                    provider_id=candidate_id,
+                    prompt=prompt,
+                    fallback_to_using_provider=fallback_to_using_provider,
+                )
+                if effective_timeout <= 0:
+                    text = await coro
+                else:
+                    text = await asyncio.wait_for(coro, timeout=effective_timeout)
+            except asyncio.TimeoutError:
+                logger.debug(
+                    "forward-context | image caption provider timeout | provider_id=%s timeout_sec=%s image_url=%s",
+                    provider_label,
+                    effective_timeout,
+                    image_url,
+                )
+                continue
+            except Exception as e:
+                logger.debug(
+                    "forward-context | image caption provider failed | provider_id=%s err=%s",
+                    provider_label,
+                    e,
+                )
+                continue
+
+            text = str(text or "").strip()
+            if text:
+                return text
+            logger.debug(
+                "forward-context | image caption provider returned empty | provider_id=%s image_url=%s",
+                provider_label,
+                image_url,
+            )
+        return ""
+
+    async def _caption_provider_candidates(
+        self, event: Any, provider_id: str = ""
+    ) -> list[tuple[str, bool]]:
+        explicit_provider_id = str(provider_id or "").strip()
+        if explicit_provider_id:
+            return [(explicit_provider_id, False)]
+
+        configured_provider_ids: list[str] = []
+        seen_provider_ids: set[str] = set()
+        for item in getattr(self.cfg, "image_caption_provider_ids", []):
+            text = str(item or "").strip()
+            if not text or text in seen_provider_ids:
+                continue
+            configured_provider_ids.append(text)
+            seen_provider_ids.add(text)
+        if configured_provider_ids:
+            return [(item, False) for item in configured_provider_ids]
+
+        legacy_provider_id = str(self.cfg.image_caption_provider_id or "").strip()
+        if legacy_provider_id:
+            return [(legacy_provider_id, False)]
+
+        current_provider_id = await self._get_current_chat_provider_id(event)
+        if current_provider_id:
+            return [(current_provider_id, True)]
+        return [("", True)]
 
     async def _caption_via_provider(
         self,
@@ -114,14 +172,13 @@ class ImageCaptioner:
         *,
         provider_id: str = "",
         prompt: str = "",
+        fallback_to_using_provider: bool = True,
     ) -> str:
         prompt = (prompt or self.cfg.image_caption_prompt or "").strip()
         if not prompt:
             prompt = "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。"
 
-        provider_id = (provider_id or self.cfg.image_caption_provider_id or "").strip()
-        if not provider_id:
-            provider_id = await self._get_current_chat_provider_id(event)
+        provider_id = str(provider_id or "").strip()
 
         llm_generate = getattr(self.context, "llm_generate", None)
         if callable(llm_generate) and provider_id:
@@ -141,7 +198,11 @@ class ImageCaptioner:
                     e,
                 )
 
-        provider = await self._get_provider(event, provider_id)
+        provider = await self._get_provider(
+            event,
+            provider_id,
+            fallback_to_using_provider=fallback_to_using_provider,
+        )
         text_chat = getattr(provider, "text_chat", None)
         if callable(text_chat):
             resp = await text_chat(prompt=prompt, image_urls=[image_url])
@@ -168,7 +229,13 @@ class ImageCaptioner:
             logger.debug("forward-context | get current provider id failed: %s", e)
             return ""
 
-    async def _get_provider(self, event: Any, provider_id: str) -> Any:
+    async def _get_provider(
+        self,
+        event: Any,
+        provider_id: str,
+        *,
+        fallback_to_using_provider: bool = True,
+    ) -> Any:
         if provider_id:
             getter = getattr(self.context, "get_provider_by_id", None)
             if callable(getter):
@@ -178,6 +245,9 @@ class ImageCaptioner:
                         return provider
                 except Exception as e:
                     logger.debug("forward-context | get provider by id failed: %s", e)
+
+        if not fallback_to_using_provider:
+            return None
 
         getter = getattr(self.context, "get_using_provider", None)
         if callable(getter):
@@ -193,12 +263,17 @@ class ImageCaptioner:
     def _response_text(self, resp: Any) -> str:
         if resp is None:
             return ""
+        saw_text_field = False
         for attr in ("completion_text", "text", "content"):
+            if hasattr(resp, attr):
+                saw_text_field = True
             value = getattr(resp, attr, None)
             if value:
                 return str(value).strip()
         if isinstance(resp, dict):
             for key in ("completion_text", "text", "content"):
+                if key in resp:
+                    saw_text_field = True
                 value = resp.get(key)
                 if value:
                     return str(value).strip()
@@ -212,4 +287,6 @@ class ImageCaptioner:
                         return str(text).strip()
                 elif value:
                     return str(value).strip()
+        if saw_text_field:
+            return ""
         return str(resp).strip()

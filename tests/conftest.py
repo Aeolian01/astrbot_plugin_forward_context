@@ -52,6 +52,13 @@ if importlib.util.find_spec("astrbot") is None:
 
             return deco
 
+        @staticmethod
+        def on_decorating_result(*args, **kwargs):
+            def deco(func):
+                return func
+
+            return deco
+
     class AstrMessageEvent:
         pass
 

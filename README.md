@@ -111,6 +111,7 @@ astrbot_plugin_forward_context/
 
   "image_caption": false,
   "image_caption_provider_id": "",
+  "image_caption_provider_ids": [],
   "image_caption_prompt": "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。",
   "image_caption_timeout_sec": 30,
   "image_caption_cache_enable": true,
@@ -136,7 +137,9 @@ astrbot_plugin_forward_context/
 | `json_url_summary` | `true` | 调用当前或指定 LLM provider 生成 `[UrlSummary]` |
 | `json_url_summary_gemini_url_context` | `true` | 使用 Gemini / Google GenAI provider 总结链接时，临时启用 Gemini 原生 URL Context，适配 `gemini-2.5-flash` 等模型 |
 | `image_caption` | `false` | 为图片消息生成文字描述，需要可用的视觉模型/provider |
-| `image_caption_timeout_sec` | `30` | 单张图片转述最长等待秒数，超时后跳过图片描述，`0` 表示不限制 |
+| `image_caption_provider_ids` | `[]` | 图片转述 provider 列表，按顺序尝试；单个 provider 抛异常、超时或返回空文本时切换到下一个 |
+| `image_caption_provider_id` | `""` | 兼容旧版单 provider 配置；`image_caption_provider_ids` 非空时优先使用列表 |
+| `image_caption_timeout_sec` | `30` | 单个 provider 的图片转述最长等待秒数，超时后尝试下一个 provider，`0` 表示不限制 |
 | `debug_log_raw_forward_result` | `false` | 打印 `get_forward_msg` / `get_msg` 返回结构，排查适配器字段差异 |
 
 ## JSON 分享卡片
@@ -212,6 +215,8 @@ await cache_plugin_output(
 ```
 
 返回值是当前会话渲染后的最近输出块；如果 `forward_context` 未加载或 `capture_plugin_outputs` 未开启，会返回空字符串。
+
+图片转述可通过 `image_caption_provider_ids` 配置多个视觉模型 provider，插件会按列表顺序尝试。显式调用 `get_or_create_image_caption(..., provider_id="...")` 时只使用传入的 provider；未传入时优先使用列表，再回退到旧的 `image_caption_provider_id`，最后使用当前会话 provider。缓存仍按图片来源命中，不区分 provider。
 
 图片描述缓存也可以由其他插件复用：
 

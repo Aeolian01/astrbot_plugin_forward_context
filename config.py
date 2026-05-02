@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -23,6 +23,25 @@ def _to_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _to_str_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values: Any = [value]
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        result.append(text)
+        seen.add(text)
+    return result
 
 
 @dataclass(frozen=True)
@@ -64,6 +83,7 @@ class ForwardContextConfig:
 
     image_caption: bool = False
     image_caption_provider_id: str = ""
+    image_caption_provider_ids: list[str] = field(default_factory=list)
     image_caption_prompt: str = "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。"
     image_caption_timeout_sec: int = 30
     image_caption_cache_enable: bool = True
@@ -118,6 +138,7 @@ def parse_config(raw: dict[str, Any] | None) -> ForwardContextConfig:
             or "请用简体中文简短描述这张图片，重点说明画面主体和可见文字。"
         ),
         image_caption_timeout_sec=max(0, _to_int(raw.get("image_caption_timeout_sec"), 30)),
+        image_caption_provider_ids=_to_str_list(raw.get("image_caption_provider_ids")),
         image_caption_cache_enable=_to_bool(raw.get("image_caption_cache_enable"), True),
         image_caption_cache_persist=_to_bool(raw.get("image_caption_cache_persist"), True),
         image_caption_cache_ttl_sec=max(0, _to_int(raw.get("image_caption_cache_ttl_sec"), 30 * 24 * 3600)),

@@ -175,11 +175,17 @@
     "default": false
   },
   "image_caption_provider_id": {
-    "description": "图片转述 Provider ID",
-    "hint": "用于图片描述的视觉模型 Provider ID，留空使用默认。",
+    "description": "图片转述 Provider ID（兼容单值）",
+    "hint": "旧版单 Provider 配置。image_caption_provider_ids 非空时优先使用列表；两者都为空则使用当前会话 provider。",
     "type": "string",
     "_special": "select_provider",
     "default": ""
+  },
+  "image_caption_provider_ids": {
+    "description": "图片转述 Provider ID 列表",
+    "hint": "用于图片描述的视觉模型 Provider ID 列表，按顺序尝试。某个 provider 抛异常、超时或返回空文本时会切换到下一个。为空时回退到兼容单值配置。",
+    "type": "list",
+    "default": []
   },
   "image_caption_prompt": {
     "description": "图片转述提示词",
