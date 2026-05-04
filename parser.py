@@ -65,6 +65,7 @@ class ForwardParser:
         messages = self._get_message_segments(event)
         lines: list[str] = []
         found = False
+        saw_json_segment_with_text = False
         used_ids: list[str] = []
 
         for seg in messages:
@@ -89,6 +90,7 @@ class ForwardParser:
                     lines.append(text)
                     if seg_type == "json":
                         found = True
+                        saw_json_segment_with_text = True
 
         if not found:
             # Direct raw may contain multiForwardMsgElement even when message segments do not.
@@ -100,11 +102,11 @@ class ForwardParser:
                     text = await self.fetch_forward_text(event, fid, depth=0)
                     if text:
                         lines.append(text)
-
-        for text in await self.extract_json_texts_from_event(event):
-            if text and text not in lines:
-                lines.append(text)
-                found = True
+        if not saw_json_segment_with_text:
+            for text in await self.extract_json_texts_from_event(event):
+                if text and text not in lines:
+                    lines.append(text)
+                    found = True
 
         return ForwardParseResult("\n".join(lines).strip(), found, used_ids)
 
@@ -361,7 +363,7 @@ class ForwardParser:
         if seg_type == "record":
             return "[Record]"
         if seg_type == "json":
-            return await self.json_segment_to_text(data, event=event)
+            return await self.json_segment_to_text(data, event=event, context_obj=seg)
         if seg_type == "node":
             return await self.forward_node_to_text(event, seg, depth=depth)
         if seg_type == "nodes":
@@ -412,6 +414,41 @@ class ForwardParser:
                 return text
         return self.extract_xml_preview_from_obj(obj)
 
+    async def fetch_forward_messages_text(
+        self,
+        event: Any,
+        forward_id: str,
+        *,
+        depth: int = 0,
+        context_obj: Any = None,
+        extra_res_ids: list[str] | None = None,
+    ) -> str:
+        ids = [str(forward_id)] if forward_id else []
+        for rid in extra_res_ids or []:
+            if rid not in ids:
+                ids.append(rid)
+        for fid in ids:
+            data = await self.call_onebot_action(event, "get_forward_msg", id=fid)
+            if self.cfg.debug_log_raw_forward_result:
+                logger.debug("forward-context | get_forward_msg raw result | forward_id=%s result=%s", fid, data)
+            messages = self.extract_forward_messages(data)
+            if not messages:
+                continue
+            preview_entries = (
+                self.extract_xml_preview_entries_from_obj(data)
+                or self.extract_xml_preview_entries_from_obj(context_obj)
+                or self.extract_xml_preview_entries_from_event(event)
+            )
+            text = await self.forward_messages_to_text(
+                event,
+                messages,
+                depth=depth + 1,
+                preview_entries=preview_entries,
+            )
+            if text:
+                return text
+        return ""
+
     async def extract_json_texts_from_event(self, event: Any) -> list[str]:
         objs: list[Any] = []
         msg_obj = getattr(event, "message_obj", None)
@@ -422,22 +459,22 @@ class ForwardParser:
         return await self.extract_json_texts_from_obj(objs, event=event)
 
     async def extract_json_texts_from_obj(self, obj: Any, *, event: Any = None) -> list[str]:
-        payloads: list[Any] = []
+        payloads: list[tuple[Any, Any]] = []
         seen_payloads: set[str] = set()
 
         def walk(value: Any) -> None:
             if isinstance(value, dict):
                 if self._normalize_segment_type(value.get("type")) == "json":
-                    self._append_json_payload(payloads, seen_payloads, self._segment_data(value) or value)
+                    self._append_json_payload(payloads, seen_payloads, self._segment_data(value) or value, obj)
                 raw = value.get("raw_message")
                 if isinstance(raw, str) and "[CQ:json" in raw:
-                    self._append_json_payload(payloads, seen_payloads, raw)
+                    self._append_json_payload(payloads, seen_payloads, raw, obj)
                 ark = value.get("arkElement")
                 if isinstance(ark, dict) and ark.get("bytesData"):
-                    self._append_json_payload(payloads, seen_payloads, ark.get("bytesData"))
+                    self._append_json_payload(payloads, seen_payloads, ark.get("bytesData"), obj)
                 bytes_data = value.get("bytesData")
                 if isinstance(bytes_data, str):
-                    self._append_json_payload(payloads, seen_payloads, bytes_data)
+                    self._append_json_payload(payloads, seen_payloads, bytes_data, obj)
                 for child in value.values():
                     walk(child)
             elif isinstance(value, list):
@@ -448,24 +485,28 @@ class ForwardParser:
 
         texts: list[str] = []
         seen_texts: set[str] = set()
-        for payload in payloads:
-            text = await self.json_segment_to_text(payload, event=event)
+        for payload, context_obj in payloads:
+            text = await self.json_segment_to_text(payload, event=event, context_obj=context_obj)
             if text and text not in seen_texts:
                 seen_texts.add(text)
                 texts.append(text)
         return texts
 
-    def _append_json_payload(self, payloads: list[Any], seen: set[str], value: Any) -> None:
+    def _append_json_payload(self, payloads: list[tuple[Any, Any]], seen: set[str], value: Any, context_obj: Any) -> None:
         marker = repr(value)
         if marker in seen:
             return
         seen.add(marker)
-        payloads.append(value)
+        payloads.append((value, context_obj))
 
-    async def json_segment_to_text(self, data: Any, *, event: Any = None) -> str:
+    async def json_segment_to_text(self, data: Any, *, event: Any = None, context_obj: Any = None) -> str:
         obj = self._json_payload_to_obj(data)
         if not isinstance(obj, dict):
             return ""
+
+        forward_text = await self.json_forward_share_to_text(data, obj, event=event, context_obj=context_obj)
+        if forward_text:
+            return forward_text
 
         lines: list[str] = ["[JsonShare]"]
         seen_values: set[str] = set()
@@ -493,6 +534,107 @@ class ForwardParser:
             lines.append(url_content)
 
         return "\n".join(lines).strip() if len(lines) > 1 else ""
+
+    async def json_forward_share_to_text(
+        self,
+        data: Any,
+        obj: dict[str, Any],
+        *,
+        event: Any = None,
+        context_obj: Any = None,
+    ) -> str:
+        if not self.cfg.parse_direct_forward:
+            return ""
+        if not self._is_forward_like_json_payload(data, parsed_obj=obj, context_obj=context_obj):
+            return ""
+        contexts: list[Any] = [obj, data, context_obj]
+        msg_obj = getattr(event, "message_obj", None)
+        for attr in ("raw", "raw_message", "message"):
+            value = getattr(msg_obj, attr, None) if msg_obj is not None else None
+            if value:
+                contexts.append(value)
+        ids = self.extract_json_forward_res_ids_from_obj(contexts)
+        if not ids:
+            return ""
+        return await self.fetch_forward_messages_text(
+            event,
+            ids[0],
+            depth=0,
+            context_obj=contexts,
+            extra_res_ids=ids,
+        )
+
+    def _is_forward_like_json_payload(
+        self,
+        data: Any,
+        *,
+        parsed_obj: dict[str, Any] | None = None,
+        context_obj: Any = None,
+    ) -> bool:
+        obj = parsed_obj or self._json_payload_to_obj(data)
+        if not isinstance(obj, dict):
+            return False
+        for key in (
+            "title",
+            "name",
+            "desc",
+            "description",
+            "summary",
+            "tag",
+            "source",
+            "appname",
+            "app_name",
+            "prompt",
+        ):
+            text = self._clean_json_text(self._first_json_scalar(obj, (key,)))
+            if self._is_forward_json_hint(text):
+                return True
+        return self._json_obj_has_forward_res_id(obj) or self._json_obj_has_forward_res_id(data)
+
+    def _is_forward_json_hint(self, value: Any) -> bool:
+        text = self._clean_json_text(value)
+        if not text:
+            return False
+        if self._is_forward_preview_placeholder(text):
+            return True
+        normalized = text.replace(" ", "").lower()
+        return (
+            "群聊的聊天记录" in normalized
+            or "群聊的聊天記錄" in normalized
+            or "[forward]" in normalized
+            or "[转发消息]" in normalized
+            or "[轉發消息]" in normalized
+        )
+
+    def _json_obj_has_forward_res_id(self, obj: Any) -> bool:
+        found = False
+
+        def walk(value: Any) -> None:
+            nonlocal found
+            if found:
+                return
+            if isinstance(value, dict):
+                if isinstance(value.get("multiForwardMsgElement"), dict):
+                    found = True
+                    return
+                if any(key in value and value.get(key) for key in ("resId", "resid", "m_resid", "fileName")):
+                    found = True
+                    return
+                if self._normalize_segment_type(value.get("type")) == "forward" and value.get("id"):
+                    found = True
+                    return
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+            elif isinstance(value, str):
+                lowered = value.lower()
+                if "[cq:forward" in lowered or "m_resid=" in lowered:
+                    found = True
+
+        walk(obj)
+        return found
 
     def _json_payload_to_obj(self, value: Any) -> Any:
         if isinstance(value, dict):
@@ -750,6 +892,31 @@ class ForwardParser:
                 add(html.unescape(m.group(1)).strip())
             for m in re.finditer(r'm_resid="([^"]+)"', text):
                 add(html.unescape(m.group(1)).strip())
+        return ids
+
+    def extract_json_forward_res_ids_from_obj(self, obj: Any) -> list[str]:
+        ids: list[str] = []
+
+        def add(value: Any) -> None:
+            if value:
+                text = html.unescape(str(value)).strip()
+                if text and text not in ids:
+                    ids.append(text)
+
+        for fid in self.extract_forward_res_ids_from_obj(obj):
+            add(fid)
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                for key in ("resId", "resid", "m_resid", "fileName", "id"):
+                    add(value.get(key))
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(obj)
         return ids
 
     def iter_multi_forward_elements(self, obj: Any):
