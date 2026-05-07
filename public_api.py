@@ -16,6 +16,7 @@ ImageMessageReader = Callable[
     Union[dict[str, Any], Awaitable[dict[str, Any]]],
 ]
 HistoryMessageParser = Callable[[Any, Any], Union[str, Awaitable[str]]]
+CurrentMessageParser = Callable[[Any], Union[str, Awaitable[str]]]
 
 _cache_plugin_output_handler: CachePluginOutputHandler | None = None
 _image_caption_cache_reader: ImageCaptionCacheReader | None = None
@@ -23,6 +24,7 @@ _image_caption_cache_writer: ImageCaptionCacheWriter | None = None
 _image_caption_creator: ImageCaptionCreator | None = None
 _image_message_reader: ImageMessageReader | None = None
 _history_message_parser: HistoryMessageParser | None = None
+_current_message_parser: CurrentMessageParser | None = None
 
 
 def register_plugin_output_cache(handler: CachePluginOutputHandler) -> None:
@@ -84,6 +86,17 @@ def unregister_history_message_parser(parser: HistoryMessageParser) -> None:
     global _history_message_parser
     if _history_message_parser is parser:
         _history_message_parser = None
+
+
+def register_current_message_parser(parser: CurrentMessageParser) -> None:
+    global _current_message_parser
+    _current_message_parser = parser
+
+
+def unregister_current_message_parser(parser: CurrentMessageParser) -> None:
+    global _current_message_parser
+    if _current_message_parser is parser:
+        _current_message_parser = None
 
 
 async def get_cached_image_caption(source: Any) -> str:
@@ -152,6 +165,17 @@ async def parse_history_message(event: Any, message: Any) -> str:
     if handler is None:
         return ""
     result = handler(event, message)
+    if inspect.isawaitable(result):
+        result = await result
+    return str(result or "").strip()
+
+
+async def parse_current_message(event: Any) -> str:
+    """Parse and attach the current event through forward-context."""
+    handler = _current_message_parser
+    if handler is None:
+        return ""
+    result = handler(event)
     if inspect.isawaitable(result):
         result = await result
     return str(result or "").strip()
