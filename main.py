@@ -16,8 +16,10 @@ from .public_api import (
     register_image_caption_cache,
     register_image_caption_creator,
     register_image_message_reader,
+    register_current_message_parser,
     register_history_message_parser,
     register_plugin_output_cache,
+    unregister_current_message_parser,
     unregister_image_caption_cache,
     unregister_image_caption_creator,
     unregister_image_message_reader,
@@ -82,6 +84,8 @@ class ForwardContextPlugin(Star):
         register_image_message_reader(self._image_message_reader)
         self._history_message_parser = self.parse_history_message
         register_history_message_parser(self._history_message_parser)
+        self._current_message_parser = self._parse_and_attach
+        register_current_message_parser(self._current_message_parser)
 
     async def terminate(self):
         unregister_plugin_output_cache(self._cache_handler)
@@ -92,6 +96,7 @@ class ForwardContextPlugin(Star):
         unregister_image_caption_creator(self._image_caption_creator)
         unregister_image_message_reader(self._image_message_reader)
         unregister_history_message_parser(self._history_message_parser)
+        unregister_current_message_parser(self._current_message_parser)
 
     def _message_type_name(self, event: AstrMessageEvent) -> str:
         try:
