@@ -12,6 +12,7 @@ from astrbot.api import logger
 
 from .config import ForwardContextConfig
 from .image_caption import ImageCaptioner
+from .video_caption import VideoCaptioner
 
 
 @dataclass
@@ -22,9 +23,15 @@ class ForwardParseResult:
 
 
 class ForwardParser:
-    def __init__(self, cfg: ForwardContextConfig, image_captioner: ImageCaptioner | None = None) -> None:
+    def __init__(
+        self,
+        cfg: ForwardContextConfig,
+        image_captioner: ImageCaptioner | None = None,
+        video_captioner: VideoCaptioner | None = None,
+    ) -> None:
         self.cfg = cfg
         self.image_captioner = image_captioner
+        self.video_captioner = video_captioner
         self._url_content_cache: dict[str, str] = {}
         self._member_name_cache: dict[tuple[str, str], str] = {}
         self._user_name_cache: dict[str, str] = {}
@@ -359,7 +366,24 @@ class ForwardParser:
                     return f"[Image: {caption}]"
             return str(fallback or "[Image]")
         if seg_type == "video":
-            return "[Video]"
+            fallback = data.get("summary") or "[Video]"
+            url = (
+                data.get("url")
+                or data.get("video_url")
+                or data.get("src")
+                or data.get("download_url")
+                or data.get("origin_url")
+                or data.get("file")
+                or data.get("path")
+                or ""
+            )
+            fileid = data.get("fileid") or data.get("file_id") or ""
+            cache_source = f"fileid:{fileid}" if fileid else (data.get("file") or url)
+            if self.video_captioner and self.cfg.video_caption:
+                caption = await self.video_captioner.caption(event, url, cache_source=cache_source)
+                if caption:
+                    return f"[Video: {caption}]"
+            return str(fallback or "[Video]")
         if seg_type == "record":
             return "[Record]"
         if seg_type == "json":
@@ -1297,6 +1321,7 @@ class ForwardParser:
             "fileid",
             "file_id",
             "image_url",
+            "video_url",
             "src",
             "download_url",
             "origin_url",

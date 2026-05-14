@@ -27,6 +27,7 @@ from .public_api import (
     unregister_plugin_output_cache,
 )
 from .recent_context import RecentContextStore
+from .video_caption import VideoCaptioner
 
 
 class ForwardContextPlugin(Star):
@@ -59,12 +60,17 @@ class ForwardContextPlugin(Star):
         self.plugin_data_dir.mkdir(parents=True, exist_ok=True)
 
         self.image_captioner = ImageCaptioner(context, self.cfg, self.plugin_data_dir)
+        self.video_captioner = VideoCaptioner(context, self.cfg, self.plugin_data_dir)
         self.image_message_registry = ImageMessageRegistryStore(
             self.plugin_data_dir / "image_message_registry.json",
-            max_messages_per_origin=max(100, self.cfg.image_caption_cache_max_items),
+            max_messages_per_origin=max(
+                100,
+                self.cfg.image_caption_cache_max_items,
+                self.cfg.video_caption_cache_max_items,
+            ),
             max_origins=500,
         )
-        self.parser = ForwardParser(self.cfg, self.image_captioner)
+        self.parser = ForwardParser(self.cfg, self.image_captioner, self.video_captioner)
         self.recent_outputs = RecentContextStore(
             ttl_sec=self.cfg.plugin_output_ttl_sec,
             max_items=self.cfg.plugin_output_max_items,
@@ -129,36 +135,71 @@ class ForwardContextPlugin(Star):
                 return clean
         return ""
 
-    def _image_source_from_data(self, data: dict[str, Any]) -> dict[str, str] | None:
-        image_url = self._pick_first(
+    def _media_source_from_data(
+        self, data: dict[str, Any], *, media_type: str
+    ) -> dict[str, str] | None:
+        media_url_keys = (
+            ("url", "image_url", "src", "download_url", "origin_url", "file", "path")
+            if media_type == "image"
+            else (
+                "url",
+                "video_url",
+                "src",
+                "download_url",
+                "origin_url",
+                "file",
+                "path",
+            )
+        )
+        media_url = self._pick_first(
             data,
-            ("url", "image_url", "src", "download_url", "origin_url", "file", "path"),
+            media_url_keys,
         )
         fileid = self._pick_first(data, ("fileid", "file_id"))
         if fileid and not fileid.startswith("fileid:"):
             fileid = f"fileid:{fileid}"
         cache_source = fileid or self._pick_first(
             data,
-            ("file", "url", "image_url", "src", "path", "download_url", "origin_url"),
+            ("file", "url", "image_url", "video_url", "src", "path", "download_url", "origin_url"),
         )
-        if not image_url and not cache_source:
+        if not media_url and not cache_source:
             return None
         return {
-            "url": image_url or cache_source,
-            "cache_source": cache_source or image_url,
+            "url": media_url or cache_source,
+            "cache_source": cache_source or media_url,
         }
 
-    def _image_sources_from_segments(self, segments: Any) -> list[dict[str, str]]:
+    def _image_source_from_data(self, data: dict[str, Any]) -> dict[str, str] | None:
+        return self._media_source_from_data(data, media_type="image")
+
+    def _media_sources_from_segments(
+        self, segments: Any, *, media_type: str
+    ) -> list[dict[str, str]]:
         if not isinstance(segments, list):
             return []
         sources: list[dict[str, str]] = []
         for seg in segments:
-            if self.parser._segment_type(seg) != "image":
+            if self.parser._segment_type(seg) != media_type:
                 continue
-            source = self._image_source_from_data(self.parser._segment_data(seg))
+            source = self._media_source_from_data(
+                self.parser._segment_data(seg),
+                media_type=media_type,
+            )
             if source is not None:
                 sources.append(source)
         return sources
+
+    def _image_sources_from_segments(self, segments: Any) -> list[dict[str, str]]:
+        return self._media_sources_from_segments(segments, media_type="image")
+
+    def _video_sources_from_segments(self, segments: Any) -> list[dict[str, str]]:
+        return self._media_sources_from_segments(segments, media_type="video")
+
+    def _event_media_counts(self, event: Any) -> tuple[int, int]:
+        segments = self.parser._get_message_segments(event)
+        image_count = len(self._image_sources_from_segments(segments))
+        video_count = len(self._video_sources_from_segments(segments))
+        return image_count, video_count
 
     def _event_message_id(self, event: Any) -> str:
         msg_obj = getattr(event, "message_obj", None)
@@ -394,6 +435,8 @@ class ForwardContextPlugin(Star):
         return updated
 
     async def _parse_and_attach(self, event: AstrMessageEvent) -> str:
+        self._register_event_image_message(event)
+        image_count, video_count = self._event_media_counts(event)
         result = await self.parser.parse_event(event)
         text = result.text.strip()
         if not text:
@@ -403,6 +446,9 @@ class ForwardContextPlugin(Star):
                 event.set_extra(self.cfg.extra_key, text)
                 event.set_extra("_forward_context_found", result.found_forward)
                 event.set_extra("_forward_context_ids", result.used_forward_ids or [])
+                event.set_extra("_forward_context_parsed", True)
+                event.set_extra("_forward_context_image_count", image_count)
+                event.set_extra("_forward_context_video_count", video_count)
             except Exception as e:
                 logger.debug("forward-context | set event extra failed: %s", e)
         if self.cfg.inject_to_event_message_str and result.found_forward:
@@ -412,9 +458,11 @@ class ForwardContextPlugin(Star):
                     getattr(event, "unified_msg_origin", ""),
                 )
         logger.debug(
-            "forward-context | parsed | origin=%s found=%s text=%s",
+            "forward-context | parsed | origin=%s found=%s images=%s videos=%s text=%s",
             getattr(event, "unified_msg_origin", ""),
             result.found_forward,
+            image_count,
+            video_count,
             text[:800],
         )
         return text
@@ -429,7 +477,6 @@ class ForwardContextPlugin(Star):
         if not self._should_parse_event(event):
             return
         try:
-            self._register_event_image_message(event)
             await self._parse_and_attach(event)
             self._get_recent_output_context(event)
         except Exception as e:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from astrbot_plugin_forward_context.cache import (
@@ -7,6 +8,7 @@ from astrbot_plugin_forward_context.cache import (
     ImageMessageRegistryStore,
     build_image_caption_sources,
 )
+from astrbot_plugin_forward_context.config import ForwardContextConfig
 from astrbot_plugin_forward_context.main import ForwardContextPlugin
 
 
@@ -80,6 +82,15 @@ class _DummyParser:
     def _segment_data(self, seg):
         return seg.get("data", {}) if isinstance(seg, dict) else {}
 
+    async def parse_event(self, _event):
+        return _ParseResult()
+
+
+class _ParseResult:
+    text = "[Image]\n[Video]"
+    found_forward = False
+    used_forward_ids = []
+
 
 class _MessageObj:
     message_id = "current-1"
@@ -97,6 +108,12 @@ class _Event:
             },
         }
     ]
+
+    def __init__(self) -> None:
+        self.extras = {}
+
+    def set_extra(self, key, value) -> None:
+        self.extras[key] = value
 
 
 def test_registers_current_and_history_image_messages(tmp_path) -> None:
@@ -129,3 +146,36 @@ def test_registers_current_and_history_image_messages(tmp_path) -> None:
     assert current["cache_sources"] == ["fileid:cur"]
     assert history["urls"] == ["https://example.com/history.png?fileid=hist&rkey=temp"]
     assert history["cache_sources"] == ["fileid:hist"]
+
+
+def test_parse_and_attach_sets_media_extras_and_registers_images(tmp_path) -> None:
+    class MediaEvent(_Event):
+        segments = [
+            *_Event.segments,
+            {
+                "type": "video",
+                "data": {
+                    "url": "https://example.com/video.mp4",
+                    "fileid": "vid",
+                },
+            },
+        ]
+
+    plugin = ForwardContextPlugin.__new__(ForwardContextPlugin)
+    plugin.cfg = ForwardContextConfig()
+    plugin.parser = _DummyParser()
+    plugin.image_message_registry = ImageMessageRegistryStore(
+        tmp_path / "image_message_registry.json"
+    )
+
+    event = MediaEvent()
+    text = asyncio.run(plugin._parse_and_attach(event))
+
+    assert text == "[Image]\n[Video]"
+    assert event.extras["_forward_context_text"] == "[Image]\n[Video]"
+    assert event.extras["_forward_context_found"] is False
+    assert event.extras["_forward_context_parsed"] is True
+    assert event.extras["_forward_context_image_count"] == 1
+    assert event.extras["_forward_context_video_count"] == 1
+    current = plugin.image_message_registry.get_message("origin", "current-1")
+    assert current["urls"] == ["https://example.com/current.png?fileid=cur&rkey=temp"]

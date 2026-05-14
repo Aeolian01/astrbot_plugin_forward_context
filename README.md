@@ -16,6 +16,7 @@
 - 支持 QQ JSON / ARK 分享卡片，例如小黑盒、新闻、应用分享等 `ComponentType.Json`
 - 可把 JSON 分享卡片的 `url` 交给当前 LLM provider 读取并生成 `[UrlSummary]`
 - 可选图片描述，支持内存缓存和 JSON 持久化缓存
+- 可选视频描述，通过 `video_urls=[...]` 直传给支持视频输入的 provider，失败时回退 `[Video]`
 - 可缓存其他插件最近输出，默认只写入 extra，由消费方决定是否拼入 prompt
 - 暴露 `cache_plugin_output()`，供主动推送类插件手动写入最近输出缓存
 - 暴露图片描述缓存读写接口，供 enhance-mode 等插件共享图片转述缓存
@@ -26,6 +27,7 @@
 QQ 原始消息 / AstrBot 消息链
   -> forward_context 解析合并转发、JSON 卡片、图片等复杂段
   -> 写入 event.extra["_forward_context_text"]
+  -> 写入 event.extra["_forward_context_parsed"] / image_count / video_count
   -> enhance-mode / 其他插件统一读取 extra 组装最终 prompt
   -> LLM 读取到可理解的上下文
 ```
@@ -119,6 +121,16 @@ astrbot_plugin_forward_context/
   "image_caption_cache_ttl_sec": 2592000,
   "image_caption_cache_max_items": 1000,
 
+  "video_caption": false,
+  "video_caption_provider_id": "",
+  "video_caption_provider_ids": [],
+  "video_caption_prompt": "请用简体中文简短描述这个视频，重点说明主要画面、动作、可见文字和关键信息。",
+  "video_caption_timeout_sec": 60,
+  "video_caption_cache_enable": true,
+  "video_caption_cache_persist": true,
+  "video_caption_cache_ttl_sec": 2592000,
+  "video_caption_cache_max_items": 1000,
+
   "debug_log_raw_forward_result": false
 }
 ```
@@ -140,6 +152,10 @@ astrbot_plugin_forward_context/
 | `image_caption_provider_ids` | `[]` | 图片转述 provider 列表，按顺序尝试；单个 provider 抛异常、超时或返回空文本时切换到下一个 |
 | `image_caption_provider_id` | `""` | 兼容旧版单 provider 配置；`image_caption_provider_ids` 非空时优先使用列表 |
 | `image_caption_timeout_sec` | `30` | 单个 provider 的图片转述最长等待秒数，超时后尝试下一个 provider，`0` 表示不限制 |
+| `video_caption` | `false` | 为视频消息生成文字描述，调用 provider 时使用 `video_urls=[...]`，不做本地抽帧 |
+| `video_caption_provider_ids` | `[]` | 视频转述 provider 列表，按顺序尝试；异常、超时或空文本会切换到下一个 |
+| `video_caption_provider_id` | `""` | 兼容单 provider 配置；`video_caption_provider_ids` 非空时优先使用列表 |
+| `video_caption_timeout_sec` | `60` | 单个 provider 的视频转述最长等待秒数，`0` 表示不限制 |
 | `debug_log_raw_forward_result` | `false` | 打印 `get_forward_msg` / `get_msg` 返回结构，排查适配器字段差异 |
 
 ## JSON 分享卡片

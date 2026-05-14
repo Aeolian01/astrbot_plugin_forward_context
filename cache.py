@@ -45,12 +45,12 @@ def _url_source_aliases(source: str) -> list[str]:
         return []
 
 
-def build_image_caption_sources(
-    image_url: str = "",
+def build_media_caption_sources(
+    media_url: str = "",
     cache_source: str = "",
     extra_sources: Any = None,
 ) -> list[str]:
-    """Build all equivalent source keys for the shared image caption cache."""
+    """Build all equivalent source keys for a shared media caption cache."""
     sources: list[str] = []
 
     def add(value: object) -> None:
@@ -62,10 +62,36 @@ def build_image_caption_sources(
                 sources.append(alias)
 
     add(cache_source)
-    add(image_url)
+    add(media_url)
     for source in _source_values(extra_sources):
         add(source)
     return sources
+
+
+def build_image_caption_sources(
+    image_url: str = "",
+    cache_source: str = "",
+    extra_sources: Any = None,
+) -> list[str]:
+    """Build all equivalent source keys for the shared image caption cache."""
+    return build_media_caption_sources(
+        media_url=image_url,
+        cache_source=cache_source,
+        extra_sources=extra_sources,
+    )
+
+
+def build_video_caption_sources(
+    video_url: str = "",
+    cache_source: str = "",
+    extra_sources: Any = None,
+) -> list[str]:
+    """Build all equivalent source keys for the shared video caption cache."""
+    return build_media_caption_sources(
+        media_url=video_url,
+        cache_source=cache_source,
+        extra_sources=extra_sources,
+    )
 
 
 class ImageCaptionCache:
@@ -77,12 +103,16 @@ class ImageCaptionCache:
         persist: bool = True,
         ttl_sec: int = 30 * 24 * 3600,
         max_items: int = 1000,
+        key_prefix: str = "imgcap",
+        log_label: str = "image_caption",
     ) -> None:
         self.path = path
         self.enable = enable
         self.persist = persist
         self.ttl_sec = ttl_sec
         self.max_items = max_items
+        self.key_prefix = str(key_prefix or "imgcap").strip() or "imgcap"
+        self.log_label = str(log_label or "image_caption").strip() or "image_caption"
         self._data: dict[str, dict[str, Any]] = {}
         if self.enable and self.persist:
             self._data = self._load()
@@ -147,7 +177,9 @@ class ImageCaptionCache:
         normalized = self._normalize_source(source)
         if not normalized:
             return ""
-        return "imgcap:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        return self.key_prefix + ":" + hashlib.sha256(
+            normalized.encode("utf-8")
+        ).hexdigest()
 
     def _sources(self, source_or_sources: Any) -> list[str]:
         return build_image_caption_sources(extra_sources=source_or_sources)
@@ -194,7 +226,8 @@ class ImageCaptionCache:
             return
         self._save()
         logger.debug(
-            "forward-context | image_caption cache saved | sources=%s",
+            "forward-context | %s cache saved | sources=%s",
+            self.log_label,
             saved_sources,
         )
 

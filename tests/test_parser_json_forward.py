@@ -71,6 +71,17 @@ def _parser() -> ForwardParser:
     return ForwardParser(ForwardContextConfig(json_url_summary=False))
 
 
+class _VideoCaptioner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def caption(
+        self, _event: object, video_url: str, *, cache_source: str = ""
+    ) -> str:
+        self.calls.append((video_url, cache_source))
+        return "video caption"
+
+
 def test_json_chat_record_card_expands_from_outer_res_id() -> None:
     seg = _json_seg({"desc": "[聊天记录]", "tag": "群聊的聊天记录"})
     api = _Api({"res-1": _forward_response("tweet text")})
@@ -102,6 +113,36 @@ def test_regular_json_share_does_not_call_get_forward_msg() -> None:
 
     assert result.text == "[JsonShare]\ntitle: 新闻标题\ndesc: 普通分享\ntag: 小黑盒"
     assert api.calls == []
+
+
+def test_video_segment_returns_placeholder_when_caption_disabled() -> None:
+    seg = {
+        "type": "video",
+        "data": {"url": "https://example.com/video.mp4", "fileid": "vid-1"},
+    }
+    event = _Event([seg], _Api())
+
+    result = asyncio.run(_parser().parse_event(event))
+
+    assert result.text == "[Video]"
+
+
+def test_video_segment_uses_video_captioner_when_enabled() -> None:
+    seg = {
+        "type": "video",
+        "data": {"url": "https://example.com/video.mp4", "fileid": "vid-1"},
+    }
+    event = _Event([seg], _Api())
+    captioner = _VideoCaptioner()
+    parser = ForwardParser(
+        ForwardContextConfig(json_url_summary=False, video_caption=True),
+        video_captioner=captioner,
+    )
+
+    result = asyncio.run(parser.parse_event(event))
+
+    assert result.text == "[Video: video caption]"
+    assert captioner.calls == [("https://example.com/video.mp4", "fileid:vid-1")]
 
 
 def test_history_json_card_uses_outer_context_res_id() -> None:

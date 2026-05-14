@@ -223,6 +223,61 @@
     "type": "int",
     "default": 1000
   },
+  "video_caption": {
+    "description": "Video caption",
+    "hint": "Enable LLM video captioning. The video URL/file reference is passed to providers as video_urls. Providers that do not support it will be skipped.",
+    "type": "bool",
+    "default": false
+  },
+  "video_caption_provider_id": {
+    "description": "Video caption Provider ID",
+    "hint": "Legacy single provider config. video_caption_provider_ids takes precedence when non-empty.",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "video_caption_provider_ids": {
+    "description": "Video caption Provider IDs",
+    "hint": "Ordered provider list for video captioning. Failures, timeouts, and empty responses fall through to the next provider.",
+    "type": "list",
+    "default": []
+  },
+  "video_caption_prompt": {
+    "description": "Video caption prompt",
+    "hint": "Prompt sent to the video-capable provider.",
+    "type": "string",
+    "default": "请用简体中文简短描述这个视频，重点说明主要画面、动作、可见文字和关键信息。"
+  },
+  "video_caption_timeout_sec": {
+    "description": "Video caption timeout seconds",
+    "hint": "Maximum wait for one provider. 0 means no timeout.",
+    "type": "int",
+    "default": 60
+  },
+  "video_caption_cache_enable": {
+    "description": "Enable video caption cache",
+    "hint": "Cache video captions to avoid repeated LLM calls.",
+    "type": "bool",
+    "default": true
+  },
+  "video_caption_cache_persist": {
+    "description": "Persist video caption cache",
+    "hint": "Write video caption cache to plugin_data/video_caption_cache.json.",
+    "type": "bool",
+    "default": true
+  },
+  "video_caption_cache_ttl_sec": {
+    "description": "Video caption cache TTL seconds",
+    "hint": "Default is 30 days. 0 means never expire.",
+    "type": "int",
+    "default": 2592000
+  },
+  "video_caption_cache_max_items": {
+    "description": "Max video caption cache items",
+    "hint": "Newest items are retained when the cache exceeds this limit. 0 means unlimited.",
+    "type": "int",
+    "default": 1000
+  },
   "debug_log_raw_forward_result": {
     "description": "调试日志：打印 get_forward_msg 返回",
     "hint": "排查 NapCat / OneBot 返回结构时开启。可能打印很长日志。",

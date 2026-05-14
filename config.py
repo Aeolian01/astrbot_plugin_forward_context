@@ -90,6 +90,15 @@ class ForwardContextConfig:
     image_caption_cache_persist: bool = True
     image_caption_cache_ttl_sec: int = 30 * 24 * 3600
     image_caption_cache_max_items: int = 1000
+    video_caption: bool = False
+    video_caption_provider_id: str = ""
+    video_caption_provider_ids: list[str] = field(default_factory=list)
+    video_caption_prompt: str = "请用简体中文简短描述这个视频，重点说明主要画面、动作、可见文字和关键信息。"
+    video_caption_timeout_sec: int = 60
+    video_caption_cache_enable: bool = True
+    video_caption_cache_persist: bool = True
+    video_caption_cache_ttl_sec: int = 30 * 24 * 3600
+    video_caption_cache_max_items: int = 1000
 
     debug_log_raw_forward_result: bool = False
 
@@ -143,5 +152,17 @@ def parse_config(raw: dict[str, Any] | None) -> ForwardContextConfig:
         image_caption_cache_persist=_to_bool(raw.get("image_caption_cache_persist"), True),
         image_caption_cache_ttl_sec=max(0, _to_int(raw.get("image_caption_cache_ttl_sec"), 30 * 24 * 3600)),
         image_caption_cache_max_items=max(0, _to_int(raw.get("image_caption_cache_max_items"), 1000)),
+        video_caption=_to_bool(raw.get("video_caption"), False),
+        video_caption_provider_id=str(raw.get("video_caption_provider_id") or ""),
+        video_caption_prompt=str(
+            raw.get("video_caption_prompt")
+            or "请用简体中文简短描述这个视频，重点说明主要画面、动作、可见文字和关键信息。"
+        ),
+        video_caption_timeout_sec=max(0, _to_int(raw.get("video_caption_timeout_sec"), 60)),
+        video_caption_provider_ids=_to_str_list(raw.get("video_caption_provider_ids")),
+        video_caption_cache_enable=_to_bool(raw.get("video_caption_cache_enable"), True),
+        video_caption_cache_persist=_to_bool(raw.get("video_caption_cache_persist"), True),
+        video_caption_cache_ttl_sec=max(0, _to_int(raw.get("video_caption_cache_ttl_sec"), 30 * 24 * 3600)),
+        video_caption_cache_max_items=max(0, _to_int(raw.get("video_caption_cache_max_items"), 1000)),
         debug_log_raw_forward_result=_to_bool(raw.get("debug_log_raw_forward_result"), False),
     )
